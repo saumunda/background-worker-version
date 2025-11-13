@@ -1,5 +1,7 @@
 import os
 import time
+import schedule
+import datetime
 import json
 import random
 import threading
@@ -16,6 +18,21 @@ JOB_PAGE_URL = "https://www.jobsatamazon.co.uk/app#/jobSearch?query=Warehouse%20
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_IDS = os.getenv("TELEGRAM_CHAT_IDS", "")
 CHAT_IDS = [chat.strip() for chat in CHAT_IDS.split(",") if chat.strip()]
+
+# Choose scheduler mode:  A / B / C
+MODE = "C"   # "A" = Daily fixed time, "B" = Multiple times, "C" = Interval inside hours
+
+# Mode A settings
+RUN_TIME = "18:00"      # 1 time per day
+
+# Mode B settings
+MULTIPLE_TIMES = ["09:00", "14:00", "23:00"]
+
+# Mode C settings
+INTERVAL_MINUTES = 5
+ACTIVE_START = datetime.time(2, 0)   # 02:00
+ACTIVE_END = datetime.time(2, 40)    # 02:40
+
 
 if not TELEGRAM_BOT_TOKEN or not CHAT_IDS:
     print("f\n⚠️ Missing Telegram credentials — check Render env variables.")
@@ -140,6 +157,7 @@ def fetch_jobs(auth_token: str):
         data = response.json()
         job_cards = data.get("data", {}).get("searchJobCardsByLocation", {}).get("jobCards", [])
         print(f"\n📦 Found {len(job_cards)} jobs.")
+        send_telegram_message(f"📦 {len(job_cards)} warehouse jobs available.")
 
         for job in job_cards:
             job_id = job.get("jobId")
@@ -195,6 +213,25 @@ def keep_alive():
             print(f"\n⚠️ Keep-alive failed.")
         time.sleep(600)
 
+if MODE == "A":
+    print(f"⏰ Mode A: Running daily at {RUN_TIME}")
+    schedule.every().day.at(RUN_TIME).do(job_loop)
+
+elif MODE == "B":
+    print("⏰ Mode B: Running at times:", MULTIPLE_TIMES)
+    for t in MULTIPLE_TIMES:
+        schedule.every().day.at(t).do(job_loop)
+
+elif MODE == "C":
+    print(f"⏰ Mode C: Every {INTERVAL_MINUTES} mins between {ACTIVE_START}–{ACTIVE_END}")
+
+    def interval_job():
+        now = datetime.datetime.now().time()
+        if ACTIVE_START <= now <= ACTIVE_END:
+            job_loop()
+
+    schedule.every(INTERVAL_MINUTES).minutes.do(interval_job)
+
 # === FLASK ENDPOINTS ===
 @app.route("/")
 def home():
@@ -215,6 +252,7 @@ if __name__ == "__main__":
     threading.Thread(target=job_loop, daemon=True).start()
     threading.Thread(target=keep_alive, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+
 
 
 
